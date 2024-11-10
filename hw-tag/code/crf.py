@@ -65,8 +65,17 @@ class ConditionalRandomField(HiddenMarkovModel):
         # For a unigram model, self.WA should just have a single row:
         # that model has fewer parameters.
 
-        raise NotImplementedError   # you fill this in!
-        self.updateAB()   # compute potential matrices
+        rows = 1 if self.unigram else self.k
+        self.WB = 0.01 * torch.randn(self.V, self.k)      
+        self.WA = 0.01 * torch.randn(rows, self.k)
+
+        self.WB[self.eos_t, :] = -inf             # EOS_TAG can't emit any column's word
+        self.WB[self.bos_t, :] = -inf             # BOS_TAG can't emit any column's word
+        self.WA[:, self.bos_t] = -inf             # Nothing can transit into BOS
+        if not self.unigram:
+            self.WA[self.eos_t, :] = -inf         # EOS can transit into nothing
+        
+        self.updateAB()  
 
     def updateAB(self) -> None:
         """Set the transition and emission matrices self.A and self.B, 
@@ -77,8 +86,12 @@ class ConditionalRandomField(HiddenMarkovModel):
         # you should make a full k × k matrix A of transition potentials,
         # so that the forward-backward code will still work.
         # See init_params() in the parent class for discussion of this point.
-        
-        raise NotImplementedError   # you fill this in!
+        self.A = torch.exp(self.WA)
+        self.B = torch.exp(self.WB)
+
+        if self.unigram:
+            self.A = self.A.repeat(self.k, 1) 
+
 
     @override
     def train(self,
@@ -185,7 +198,7 @@ class ConditionalRandomField(HiddenMarkovModel):
         The corpus from which this sentence was drawn is also passed in as an
         argument, to help with integerization and check that we're integerizing
         correctly."""
-
+        
         # Integerize the words and tags of the given sentence, which came from the given corpus.
         isent = self._integerize_sentence(sentence, corpus)
 
@@ -194,7 +207,9 @@ class ConditionalRandomField(HiddenMarkovModel):
         # in order to compute the normalizing constant for this sentence.
         desup_isent = self._integerize_sentence(sentence.desupervise(), corpus)
 
-        raise NotImplementedError   # you fill this in!
+        joint_prob = self.forward_pass(isent)
+        normalizing_const = self.forward_pass(desup_isent)
+        return joint_prob - normalizing_const
 
     def accumulate_logprob_gradient(self, sentence: Sentence, corpus: TaggedCorpus) -> None:
         """Add the gradient of self.logprob(sentence, corpus) into a total minibatch
@@ -212,8 +227,16 @@ class ConditionalRandomField(HiddenMarkovModel):
         isent_sup   = self._integerize_sentence(sentence, corpus)
         isent_desup = self._integerize_sentence(sentence.desupervise(), corpus)
 
-        # Hint: use the mult argument to E_step().
-        raise NotImplementedError   # you fill this in!
+        # observed counts
+        for i in range(1, len(isent_sup)):
+            # Increment observed transition count
+            self.A_counts[isent_sup[i - 1][1], isent_sup[i][1]] += 1
+            # Increment observed emission count
+            self.B_counts[isent_sup[i][1], isent_sup[i][0]] += 1
+        
+        # -1.0 for minus the expected counts
+        self.E_step(isent_desup, mult=-1.0)
+
         
     def _zero_grad(self):
         """Reset the gradient accumulator to zero."""
@@ -228,23 +251,35 @@ class ConditionalRandomField(HiddenMarkovModel):
         # Warning: Careful about how to handle the unigram case, where self.WA
         # is only a vector of tag unigram potentials (even though self.A_counts
         # is a still a matrix of tag bigram potentials).
+        if self.unigram:
+            # for unigram, sum self.A_counts across rows
+            self.WA += lr * torch.sum(self.A_counts, dim=0, keepdim=True)
+        else:
+            self.WA += lr * self.A_counts
+
+        self.WB += lr * self.B_counts
+
+        self._zero_grad()
+
         
-        raise NotImplementedError   # you fill this in!
         
-    def reg_gradient_step(self, lr: float, reg: float, frac: float):
+    def reg_gradient_step(self, lr: float, reg: float, frac: float) -> None:
         """Update the parameters using the gradient of our regularizer.
         More precisely, this is the gradient of the portion of the regularizer 
         that is associated with a specific minibatch, and frac is the fraction
         of the corpus that fell into this minibatch."""
-                    
-        # Because this brings the weights closer to 0, it is sometimes called
-        # "weight decay".
         
-        if reg == 0: return      # can skip this step if we're not regularizing
+        if reg == 0:
+            return  # No regularization needed if reg is zero
 
-        # Warning: Be careful not to do something like w -= 0.1*w,
-        # because some of the weights are infinite and inf - inf = nan. 
-        # Instead, you want something like w *= 0.9.
+        # the coefficient is -2C/M, so technically, we want to do [A, B] -= lr * 2C/M[A, B] or [A, B] = [A, B] - lr * 2C/M[A, B]
+        # But since inf - inf = nan, we would instead do [A, B] = (1 - 2*lr*C/M)[A, B]
+        # About the frac. 1/M represent the gradient for one sentence. naturally, frac 
+        # represents k/M for k number of sentences (the minibatch) from the M sized corpus
 
-        raise NotImplementedError   # you fill this in!
+        # this is the 1 - 2*lr*C*k/M
+        reg_factor = 1 - (2 * lr * reg * frac)
+
+        self.WA *= reg_factor
+        self.WB *= reg_factor
     
