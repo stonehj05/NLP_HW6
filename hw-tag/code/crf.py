@@ -101,7 +101,7 @@ class ConditionalRandomField(HiddenMarkovModel):
               corpus: TaggedCorpus,
               loss: Callable[[ConditionalRandomField], float],
               tolerance: float =0.001,
-              minibatch_size: int = 16,
+              minibatch_size: int = 1,
               eval_interval: int = 500,
               lr: float = 1.0,
               reg: float = 0.0,
@@ -195,6 +195,7 @@ class ConditionalRandomField(HiddenMarkovModel):
 
         # Integerize the sentence for efficient tensor operations
         isent = self._integerize_sentence(sentence, corpus)
+        desup_isent = self._integerize_sentence(sentence.desupervise(), corpus)
         
         # Calculate the joint score log p̃(t, w)
         log_p_t_w = 0.0
@@ -212,11 +213,8 @@ class ConditionalRandomField(HiddenMarkovModel):
                 log_p_t_w += self.WB[tag, word]  # Emission weight
 
 
-            word = isent[i][0]  # Current word
-
-
         # Calculate log Z(w) by running the forward pass (normalizing constant)
-        log_Z_w = self.forward_pass(isent)
+        log_Z_w = self.forward_pass(desup_isent)
 
         # Return the conditional log-probability log p(t | w)
         return log_p_t_w - log_Z_w
@@ -229,17 +227,19 @@ class ConditionalRandomField(HiddenMarkovModel):
         isent_sup = self._integerize_sentence(sentence, corpus)
         isent_desup = self._integerize_sentence(sentence.desupervise(), corpus)
 
+        # transition counts iterate from 0 1 transition to n-2 n-1 transition
+        for i in range(0, len(isent_sup) - 2):
+            tag, tag_next = isent_sup[i][1], isent_sup[i + 1][1]
+            if tag is not None and tag_next is not None:
+                self.A_counts[tag, tag_next] += 1
 
         # emission counts don't need to count for BOS and EOS, thus skip 0 and len - 1
         for i in range(1, len(isent_sup) - 2):
             word = isent_sup[i][0]  # Current word
             tag = isent_sup[i][1]  # Current tag
-            self.B_counts[tag, word] += 1
+            if tag is not None:
+                self.B_counts[tag, word] += 1
         
-        # transition counts iterate from 0 1 transition to n-2 n-1 transition
-        for i in range(0, len(isent_sup) - 2):
-            tag, tag_next = isent_sup[i][1], isent_sup[i + 1][1] 
-            self.A_counts[tag, tag_next] += 1
 
         # -1.0 for minus the expected counts
         self.E_step(isent_desup, mult=-1.0)
@@ -291,4 +291,3 @@ class ConditionalRandomField(HiddenMarkovModel):
 
         self.WA *= reg_factor
         self.WB *= reg_factor
-    
