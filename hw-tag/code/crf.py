@@ -66,7 +66,7 @@ class ConditionalRandomField(HiddenMarkovModel):
         # that model has fewer parameters.
 
         rows = 1 if self.unigram else self.k
-        self.WB = 0.01 * torch.randn(self.V, self.k)      
+        self.WB = 0.01 * torch.randn(self.k, self.V)      
         self.WA = 0.01 * torch.randn(rows, self.k)
 
         self.WB[self.eos_t, :] = -inf             # EOS_TAG can't emit any column's word
@@ -91,6 +91,13 @@ class ConditionalRandomField(HiddenMarkovModel):
 
         if self.unigram:
             self.A = self.A.repeat(self.k, 1) 
+
+        logger.info(f"Transition matrix A (size: {self.A.size()})")
+        logger.info(f"Emission matrix B (size: {self.B.size()})")
+        logger.info(f"k: {self.k}")
+        logger.info(f"V: {self.V}")
+
+
 
 
     @override
@@ -152,7 +159,6 @@ class ConditionalRandomField(HiddenMarkovModel):
             minibatch_size = len(corpus)  # no point in having a minibatch larger than the corpus
         min_steps = len(corpus)   # always do at least one epoch
 
-        self.init_params()    # initialize the parameters and call updateAB()
         self._zero_grad()     # get ready to accumulate their gradient
         steps = 0
         old_loss = _loss()    # evaluate initial loss
@@ -187,29 +193,29 @@ class ConditionalRandomField(HiddenMarkovModel):
     @override
     @typechecked
     def logprob(self, sentence: Sentence, corpus: TaggedCorpus) -> TorchScalar:
-        """Return the *conditional* log-probability log p(tags | words) under the current
-        model parameters.  This behaves differently from the parent class, which returns
-        log p(tags, words).
-        
-        Just as for the parent class, if the sentence is not fully tagged, the probability
-        will marginalize over all possible tags.  Note that if the sentence is completely
-        untagged, then the marginal probability will be 1.
-                
-        The corpus from which this sentence was drawn is also passed in as an
-        argument, to help with integerization and check that we're integerizing
-        correctly."""
-        
-        # Integerize the words and tags of the given sentence, which came from the given corpus.
+        """Return the conditional log-probability log p(tags | words) under the current
+        model parameters. If the sentence is not fully tagged, the probability
+        will marginalize over all possible tags."""
+
+        # Integerize the sentence for efficient tensor operations
         isent = self._integerize_sentence(sentence, corpus)
+        
+        # Calculate the joint score log p̃(t, w)
+        log_p_t_w = 0.0
+        n = len(isent)
+        for i in range(1, n):
+            tag_prev, tag = isent[i - 1][1], isent[i][1]  # Previous and current tags
+            word = isent[i][0]  # Current word
+            if tag_prev is not None and tag is not None:
+                log_p_t_w += self.WA[tag_prev, tag]  # Transition weight
+            if tag is not None:
+                log_p_t_w += self.WB[tag, word]  # Emission weight
 
-        # Remove all tags and re-integerize the sentence.
-        # Working with this desupervised version will let you sum over all taggings
-        # in order to compute the normalizing constant for this sentence.
-        desup_isent = self._integerize_sentence(sentence.desupervise(), corpus)
+        # Calculate log Z(w) by running the forward pass (normalizing constant)
+        log_Z_w = self.forward_pass(isent)
 
-        joint_prob = self.forward_pass(isent)
-        normalizing_const = self.forward_pass(desup_isent)
-        return joint_prob - normalizing_const
+        # Return the conditional log-probability log p(t | w)
+        return log_p_t_w - log_Z_w
 
     def accumulate_logprob_gradient(self, sentence: Sentence, corpus: TaggedCorpus) -> None:
         """Add the gradient of self.logprob(sentence, corpus) into a total minibatch
@@ -220,7 +226,7 @@ class ConditionalRandomField(HiddenMarkovModel):
         # the gradient information into self.A_counts and self.B_counts.  
         # 
         # (In the next homework, you'll have fancier parameters and a fancier gradient,
-        # so you'll override this and accumulate the gradient using PyTorch's
+        # so you'll override this and3 accumulate the gradient using PyTorch's
         # backprop instead.)
         
         # Just as in logprob()
