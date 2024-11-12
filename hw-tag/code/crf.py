@@ -199,13 +199,20 @@ class ConditionalRandomField(HiddenMarkovModel):
         # Calculate the joint score log p̃(t, w)
         log_p_t_w = 0.0
         n = len(isent)
-        for i in range(1, n-1):
-            tag_prev, tag = isent[i - 1][1], isent[i][1]  # Previous and current tags
-            word = isent[i][0]  # Current word
+        for i in range(0, n-2):
+            tag_prev, tag = isent[i][1], isent[i+1][1]  # Previous and current tags
             if tag_prev is not None and tag is not None:
                 log_p_t_w += self.WA[tag_prev, tag]  # Transition weight
+
+
+        for i in range(1, n-2):
+            word = isent[i][0]  # Current word   
+            tag = isent[i][1]  # Current word         
             if tag is not None:
                 log_p_t_w += self.WB[tag, word]  # Emission weight
+
+
+            word = isent[i][0]  # Current word
 
 
         # Calculate log Z(w) by running the forward pass (normalizing constant)
