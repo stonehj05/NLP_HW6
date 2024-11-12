@@ -198,7 +198,7 @@ def parse_args() -> argparse.Namespace:
         else:
             args.model_class = HiddenMarkovModel
     else:
-        if args.args.lexicon or args.rnn_dim:
+        if args.lexicon or args.rnn_dim:
             args.model_class = NotImplemented  # for followup assignment
         else: 
             args.model_class = ConditionalRandomField        
@@ -241,7 +241,6 @@ def main() -> None:
         train_corpus = TaggedCorpus(*train_paths)
         model = model_class(train_corpus.tagset, train_corpus.vocab, 
                             unigram=args.unigram)
-
     # Load the eval corpus, using the same vocab and tagset.
     eval_corpus = TaggedCorpus(Path(args.input), tagset=model.tagset, vocab=model.vocab)
     

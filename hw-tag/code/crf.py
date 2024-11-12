@@ -65,16 +65,24 @@ class ConditionalRandomField(HiddenMarkovModel):
         # For a unigram model, self.WA should just have a single row:
         # that model has fewer parameters.
 
-        rows = 1 if self.unigram else self.k
+        '''rows = 1 if self.unigram else self.k
         self.WB = 0.01 * torch.randn(self.k, self.V)      
         self.WA = 0.01 * torch.randn(rows, self.k)
 
-        self.WB[self.eos_t, :] = -inf             # EOS_TAG can't emit any column's word
-        self.WB[self.bos_t, :] = -inf             # BOS_TAG can't emit any column's word
-        self.WA[:, self.bos_t] = -inf             # Nothing can transit into BOS
+        #self.WB[self.eos_t, :] = float("-inf")             # EOS_TAG can't emit any column's word
+        #self.WB[self.bos_t, :] = float("-inf")             # BOS_TAG can't emit any column's word
+        self.WA[:, self.bos_t] = float("-inf")              # Nothing can transit into BOS
         if not self.unigram:
-            self.WA[self.eos_t, :] = -inf         # EOS can transit into nothing
-        
+            self.WA[self.eos_t, :] = float("-inf")          # EOS can transit into nothing'''
+        if self.unigram:
+            self.WA = torch.randn(1, self.k) * 0.01
+            self.WA[self.bos_t] = float("-inf")
+            self.WA[self.eos_t] = float("-inf")
+        else:
+            self.WA = torch.randn(self.k, self.k) * 0.01
+            self.WA[:, self.bos_t] = float("-inf")
+            self.WA[self.eos_t,:] = float("-inf")
+        self.WB = torch.randn(self.k, self.V) * 0.01
         self.updateAB()  
 
     def updateAB(self) -> None:
@@ -228,7 +236,7 @@ class ConditionalRandomField(HiddenMarkovModel):
         isent_desup = self._integerize_sentence(sentence.desupervise(), corpus)
 
         # transition counts iterate from 0 1 transition to n-2 n-1 transition
-        for i in range(0, len(isent_sup) - 2):
+        '''for i in range(0, len(isent_sup) - 2):
             tag, tag_next = isent_sup[i][1], isent_sup[i + 1][1]
             if tag is not None and tag_next is not None:
                 self.A_counts[tag, tag_next] += 1
@@ -238,8 +246,8 @@ class ConditionalRandomField(HiddenMarkovModel):
             word = isent_sup[i][0]  # Current word
             tag = isent_sup[i][1]  # Current tag
             if tag is not None:
-                self.B_counts[tag, word] += 1
-        
+                self.B_counts[tag, word] += 1'''
+        self.E_step(isent_sup, mult=1.0)
 
         # -1.0 for minus the expected counts
         self.E_step(isent_desup, mult=-1.0)
