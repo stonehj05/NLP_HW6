@@ -14,7 +14,7 @@ from typeguard import typechecked
 import torch
 from torch import Tensor, cuda
 from jaxtyping import Float
-
+import sys
 import itertools, more_itertools
 from tqdm import tqdm # type: ignore
 
@@ -92,10 +92,6 @@ class ConditionalRandomField(HiddenMarkovModel):
         if self.unigram:
             self.A = self.A.repeat(self.k, 1) 
 
-        logger.info(f"Transition matrix A (size: {self.A.size()})")
-        logger.info(f"Emission matrix B (size: {self.B.size()})")
-        logger.info(f"k: {self.k}")
-        logger.info(f"V: {self.V}")
 
 
 
@@ -105,7 +101,7 @@ class ConditionalRandomField(HiddenMarkovModel):
               corpus: TaggedCorpus,
               loss: Callable[[ConditionalRandomField], float],
               tolerance: float =0.001,
-              minibatch_size: int = 1,
+              minibatch_size: int = 16,
               eval_interval: int = 500,
               lr: float = 1.0,
               reg: float = 0.0,
@@ -203,13 +199,14 @@ class ConditionalRandomField(HiddenMarkovModel):
         # Calculate the joint score log p̃(t, w)
         log_p_t_w = 0.0
         n = len(isent)
-        for i in range(1, n):
+        for i in range(1, n-1):
             tag_prev, tag = isent[i - 1][1], isent[i][1]  # Previous and current tags
             word = isent[i][0]  # Current word
             if tag_prev is not None and tag is not None:
                 log_p_t_w += self.WA[tag_prev, tag]  # Transition weight
             if tag is not None:
                 log_p_t_w += self.WB[tag, word]  # Emission weight
+
 
         # Calculate log Z(w) by running the forward pass (normalizing constant)
         log_Z_w = self.forward_pass(isent)
@@ -220,28 +217,27 @@ class ConditionalRandomField(HiddenMarkovModel):
     def accumulate_logprob_gradient(self, sentence: Sentence, corpus: TaggedCorpus) -> None:
         """Add the gradient of self.logprob(sentence, corpus) into a total minibatch
         gradient that will eventually be used to take a gradient step."""
-        
-        # In the present class, the parameters are self.WA, self.WB, the gradient
-        # is a difference of observed and expected counts, and you'll accumulate
-        # the gradient information into self.A_counts and self.B_counts.  
-        # 
-        # (In the next homework, you'll have fancier parameters and a fancier gradient,
-        # so you'll override this and3 accumulate the gradient using PyTorch's
-        # backprop instead.)
-        
-        # Just as in logprob()
-        isent_sup   = self._integerize_sentence(sentence, corpus)
+
+        # Integerize the supervised and desupervised sentences
+        isent_sup = self._integerize_sentence(sentence, corpus)
         isent_desup = self._integerize_sentence(sentence.desupervise(), corpus)
 
-        # observed counts
-        for i in range(1, len(isent_sup)):
-            # Increment observed transition count
-            self.A_counts[isent_sup[i - 1][1], isent_sup[i][1]] += 1
-            # Increment observed emission count
-            self.B_counts[isent_sup[i][1], isent_sup[i][0]] += 1
+
+        # emission counts don't need to count for BOS and EOS, thus skip 0 and len - 1
+        for i in range(1, len(isent_sup) - 2):
+            word = isent_sup[i][0]  # Current word
+            tag = isent_sup[i][1]  # Current tag
+            self.B_counts[tag, word] += 1
         
+        # transition counts iterate from 0 1 transition to n-2 n-1 transition
+        for i in range(0, len(isent_sup) - 2):
+            tag, tag_next = isent_sup[i][1], isent_sup[i + 1][1] 
+            self.A_counts[tag, tag_next] += 1
+
         # -1.0 for minus the expected counts
         self.E_step(isent_desup, mult=-1.0)
+
+
 
         
     def _zero_grad(self):
