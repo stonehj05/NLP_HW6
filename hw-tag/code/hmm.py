@@ -356,7 +356,7 @@ class HiddenMarkovModel:
                 #count_increment_B = self.alpha[index] * beta[index] / self.Z
                 count_increment_B = self.alpha[index] + beta[index] - self.Z
                 #self.B_counts[:, word] += count_increment_B
-                self.B_counts[:, word] += torch.exp(count_increment_B)
+                self.B_counts[:, word] += torch.exp(count_increment_B) * mult
             if tag is not None:
                 if tag == self.eos_t:
                     #word_prob = self.eye[self.eos_t]
@@ -372,7 +372,7 @@ class HiddenMarkovModel:
             #count_increment_A = self.alpha[index - 1].unsqueeze(1) * beta[index].unsqueeze(0) * p_matrix / self.Z
             count_increment_A = self.alpha[index - 1].unsqueeze(1) + beta[index].unsqueeze(0) + p_matrix - self.Z
             #self.A_counts += count_increment_A
-            self.A_counts += torch.exp(count_increment_A)
+            self.A_counts += torch.exp(count_increment_A) * mult
             #p_beta = beta[index] @ p_matrix
             p_beta = torch.logsumexp(beta[index].unsqueeze(1) + p_matrix.t(), dim=0)
             beta[index-1] = p_beta
